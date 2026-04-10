@@ -136,8 +136,9 @@ async function buildFeed(): Promise<SnipeFeedResponse> {
     }
   }
 
+  const fallbackItems = await buildFallbackDeals();
   return createFeedResponse(
-    buildFallbackDeals(),
+    fallbackItems,
     "fallback",
     "Seeded market snapshot • live marketplace scan is ready for future provider upgrades.",
   );
@@ -243,20 +244,41 @@ async function attemptLiveScan(): Promise<SnipeItem[]> {
       }
     }
 
-    const results = enrichedItems
+    const filteredItems = enrichedItems
       .filter((item): item is SnipeItem => Boolean(item))
       .sort((left, right) => right.dealScore - left.dealScore)
       .slice(0, MARKET_SCAN_LIMIT);
 
-    console.log(`Live scan complete: found ${results.length} profitable items`);
-    return results;
+    // Fetch and attach thumbnails
+    if (filteredItems.length > 0) {
+      try {
+        console.log(`Fetching thumbnails for ${filteredItems.length} items...`);
+        const assetIds = filteredItems.map((item) => item.id);
+        const thumbnailMap = await fetchThumbnailMap(assetIds);
+
+        const results = filteredItems.map((item) => ({
+          ...item,
+          thumbnailUrl: thumbnailMap.get(item.id) ?? null,
+        }));
+
+        console.log(`Live scan complete: found ${results.length} profitable items with thumbnails`);
+        return results;
+      } catch (error) {
+        console.log(`Thumbnail fetch failed: ${error instanceof Error ? error.message : String(error)}, continuing without thumbnails`);
+        console.log(`Live scan complete: found ${filteredItems.length} profitable items without thumbnails`);
+        return filteredItems;
+      }
+    }
+
+    console.log(`Live scan complete: found ${filteredItems.length} profitable items`);
+    return filteredItems;
   } catch (error) {
     console.error("Live scan search failed:", error instanceof Error ? error.message : String(error));
     return [];
   }
 }
 
-function buildFallbackDeals(): SnipeItem[] {
+async function buildFallbackDeals(): Promise<SnipeItem[]> {
   const now = Date.now();
 
   // Use a seed based on the date to get consistent but varied results
@@ -390,7 +412,7 @@ function buildFallbackDeals(): SnipeItem[] {
     .sort((a, b) => (daySeed + a.id) - (daySeed + b.id))
     .slice(0, 8);
 
-  return rotatedItems.map(item => decorateItem({
+  const decoratedItems = rotatedItems.map(item => decorateItem({
     id: item.id,
     name: item.name,
     category: item.category,
@@ -403,6 +425,21 @@ function buildFallbackDeals(): SnipeItem[] {
     listedAt: new Date(now - 1000 * 60 * item.minutesAgo).toISOString(),
     source: "fallback",
   }));
+
+  // Fetch and attach thumbnails
+  try {
+    console.log(`Fetching thumbnails for ${decoratedItems.length} fallback items...`);
+    const assetIds = decoratedItems.map((item) => item.id);
+    const thumbnailMap = await fetchThumbnailMap(assetIds);
+
+    return decoratedItems.map((item) => ({
+      ...item,
+      thumbnailUrl: thumbnailMap.get(item.id) ?? null,
+    }));
+  } catch (error) {
+    console.log(`Thumbnail fetch failed for fallback items: ${error instanceof Error ? error.message : String(error)}, continuing without thumbnails`);
+    return decoratedItems;
+  }
 }
 
 function createFeedResponse(
