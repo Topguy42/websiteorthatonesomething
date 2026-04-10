@@ -136,8 +136,9 @@ async function buildFeed(): Promise<SnipeFeedResponse> {
     }
   }
 
+  const fallbackItems = await buildFallbackDeals();
   return createFeedResponse(
-    buildFallbackDeals(),
+    fallbackItems,
     "fallback",
     "Seeded market snapshot • live marketplace scan is ready for future provider upgrades.",
   );
@@ -147,29 +148,29 @@ async function attemptLiveScan(): Promise<SnipeItem[]> {
   try {
     console.log("Attempting live scan from Roblox API...");
 
-    // Try various search terms that might be less rate limited
-    const searchTerms = ["accessory", "ugc", "limited"];
+    // Search for limited items specifically - these have secondary markets
+    const searchTerms = ["limited", "exclusive", "ugc hat"];
     let response: CatalogSearchResponse | null = null;
 
     for (const keyword of searchTerms) {
       try {
-        console.log(`Trying search with keyword: ${keyword}`);
+        console.log(`Trying search with keyword: "${keyword}"`);
         response = await fetchJson<CatalogSearchResponse>(
-          `https://catalog.roblox.com/v1/search/items/details?keyword=${keyword}&limit=30&sortType=3`
+          `https://catalog.roblox.com/v1/search/items/details?keyword=${keyword}&limit=50&sortType=0`
         );
 
         if (response.data && response.data.length > 0) {
-          console.log(`Success with keyword "${keyword}"`);
+          console.log(`✓ Found ${response.data.length} items with keyword "${keyword}"`);
           break;
         }
       } catch (err) {
-        console.log(`Search with "${keyword}" failed: ${err instanceof Error ? err.message : String(err)}`);
+        console.log(`✗ Search with "${keyword}" failed: ${err instanceof Error ? err.message : String(err)}`);
         continue;
       }
     }
 
     if (!response) {
-      console.log("All search attempts failed");
+      console.log("All search attempts failed - no items found");
       return [];
     }
 
@@ -180,19 +181,22 @@ async function attemptLiveScan(): Promise<SnipeItem[]> {
       return [];
     }
 
+    // Filter for items with realistic prices (typically limited items cost 50-5000 robux)
     const collectibleCandidates = candidates
       .filter((item) => {
-        const restrictions = item.itemRestrictions ?? [];
-        const isCollectible = restrictions.length === 0 || restrictions.includes("Collectible") || restrictions.includes("Limited");
-        const isLikelyUgcCreator = Boolean(item.creatorName && item.creatorName.toLowerCase() !== "roblox");
-        const hasPrice = Number(item.lowestPrice ?? item.price ?? 0) > 0;
-        return isCollectible && isLikelyUgcCreator && hasPrice;
+        const price = Number(item.lowestPrice ?? item.price ?? 0);
+        const hasPrice = price > 0;
+        const realisticPrice = price >= 20 && price <= 100000; // Reasonable price range
+        const isLikelyUgc = Boolean(item.creatorName && item.creatorName.toLowerCase() !== "roblox");
+
+        return hasPrice && realisticPrice && isLikelyUgc;
       })
       .slice(0, MARKET_SCAN_LIMIT);
 
-    console.log(`Filtered down to ${collectibleCandidates.length} collectible candidates`);
+    console.log(`Filtered down to ${collectibleCandidates.length} candidates with realistic prices`);
 
     if (collectibleCandidates.length === 0) {
+      console.log("No items passed filtering criteria");
       return [];
     }
 
@@ -200,7 +204,7 @@ async function attemptLiveScan(): Promise<SnipeItem[]> {
     for (let i = 0; i < collectibleCandidates.length; i++) {
       const item = collectibleCandidates[i];
       try {
-        console.log(`Fetching resale data for item ${item.id} (${i + 1}/${collectibleCandidates.length})...`);
+        console.log(`[${i + 1}/${collectibleCandidates.length}] Fetching resale for: "${item.name}" (ID: ${item.id}) at R$${item.lowestPrice ?? item.price}`);
 
         const resale = await fetchJson<ResaleDataResponse>(
           `https://economy.roblox.com/v1/assets/${item.id}/resale-data`,
@@ -211,10 +215,21 @@ async function attemptLiveScan(): Promise<SnipeItem[]> {
         const recentResalePrice = roundCurrency(getRecentResale(resale));
         const resaleValue = roundCurrency(Math.max(rap, recentResalePrice));
 
-        if (currentPrice <= 0 || resaleValue <= currentPrice) {
-          console.log(`Item ${item.id} not profitable (current: ${currentPrice}, resale: ${resaleValue}), skipping`);
+        console.log(`  → Current: R$${currentPrice}, RAP: R$${rap}, Recent: R$${recentResalePrice}, Resale Value: R$${resaleValue}`);
+
+        // Show as potential deal if there's any resale data (not zero) and positive profit
+        if (currentPrice <= 0) {
+          console.log(`  ✗ Invalid current price`);
           enrichedItems.push(null);
-          await new Promise(resolve => setTimeout(resolve, 2000));
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          continue;
+        }
+
+        // Only filter out if resale value is 0 (no secondary market) or if it's at a significant loss
+        if (resaleValue <= 0 || resaleValue < currentPrice * 0.8) {
+          console.log(`  ✗ No secondary market or significant loss`);
+          enrichedItems.push(null);
+          await new Promise(resolve => setTimeout(resolve, 1000));
           continue;
         }
 
@@ -232,31 +247,52 @@ async function attemptLiveScan(): Promise<SnipeItem[]> {
           source: "live",
         });
 
-        console.log(`Item ${item.id} is profitable: profit=${enrichedItem.profit}, margin=${enrichedItem.profitMargin}%`);
+        console.log(`  ✓ Added to results - Profit: R$${enrichedItem.profit} (${enrichedItem.profitMargin}% margin) | Deal Score: ${enrichedItem.dealScore}`);
         enrichedItems.push(enrichedItem);
 
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        await new Promise(resolve => setTimeout(resolve, 1000));
       } catch (error) {
-        console.log(`Resale data fetch failed for item ${item.id}: ${error instanceof Error ? error.message : String(error)}, continuing...`);
+        console.log(`  ✗ Error fetching resale: ${error instanceof Error ? error.message : String(error)}`);
         enrichedItems.push(null);
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
 
-    const results = enrichedItems
+    const filteredItems = enrichedItems
       .filter((item): item is SnipeItem => Boolean(item))
       .sort((left, right) => right.dealScore - left.dealScore)
       .slice(0, MARKET_SCAN_LIMIT);
 
-    console.log(`Live scan complete: found ${results.length} profitable items`);
-    return results;
+    // Fetch and attach thumbnails
+    if (filteredItems.length > 0) {
+      try {
+        console.log(`Fetching thumbnails for ${filteredItems.length} items...`);
+        const assetIds = filteredItems.map((item) => item.id);
+        const thumbnailMap = await fetchThumbnailMap(assetIds);
+
+        const results = filteredItems.map((item) => ({
+          ...item,
+          thumbnailUrl: thumbnailMap.get(item.id) ?? null,
+        }));
+
+        console.log(`Live scan complete: found ${results.length} profitable items with thumbnails`);
+        return results;
+      } catch (error) {
+        console.log(`Thumbnail fetch failed: ${error instanceof Error ? error.message : String(error)}, continuing without thumbnails`);
+        console.log(`Live scan complete: found ${filteredItems.length} profitable items without thumbnails`);
+        return filteredItems;
+      }
+    }
+
+    console.log(`Live scan complete: found ${filteredItems.length} profitable items`);
+    return filteredItems;
   } catch (error) {
     console.error("Live scan search failed:", error instanceof Error ? error.message : String(error));
     return [];
   }
 }
 
-function buildFallbackDeals(): SnipeItem[] {
+async function buildFallbackDeals(): Promise<SnipeItem[]> {
   const now = Date.now();
 
   // Use a seed based on the date to get consistent but varied results
@@ -390,7 +426,7 @@ function buildFallbackDeals(): SnipeItem[] {
     .sort((a, b) => (daySeed + a.id) - (daySeed + b.id))
     .slice(0, 8);
 
-  return rotatedItems.map(item => decorateItem({
+  const decoratedItems = rotatedItems.map(item => decorateItem({
     id: item.id,
     name: item.name,
     category: item.category,
@@ -403,6 +439,21 @@ function buildFallbackDeals(): SnipeItem[] {
     listedAt: new Date(now - 1000 * 60 * item.minutesAgo).toISOString(),
     source: "fallback",
   }));
+
+  // Fetch and attach thumbnails
+  try {
+    console.log(`Fetching thumbnails for ${decoratedItems.length} fallback items...`);
+    const assetIds = decoratedItems.map((item) => item.id);
+    const thumbnailMap = await fetchThumbnailMap(assetIds);
+
+    return decoratedItems.map((item) => ({
+      ...item,
+      thumbnailUrl: thumbnailMap.get(item.id) ?? null,
+    }));
+  } catch (error) {
+    console.log(`Thumbnail fetch failed for fallback items: ${error instanceof Error ? error.message : String(error)}, continuing without thumbnails`);
+    return decoratedItems;
+  }
 }
 
 function createFeedResponse(
