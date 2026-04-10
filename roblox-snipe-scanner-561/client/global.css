@@ -1,0 +1,115 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 224 35% 8%;
+    --foreground: 210 40% 98%;
+
+    --card: 225 34% 11%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 225 34% 11%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 150 82% 51%;
+    --primary-foreground: 225 41% 8%;
+
+    --secondary: 226 23% 17%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 225 20% 18%;
+    --muted-foreground: 220 16% 71%;
+
+    --accent: 232 22% 19%;
+    --accent-foreground: 210 40% 98%;
+
+    --destructive: 0 82% 60%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 223 19% 22%;
+    --input: 223 19% 22%;
+    --ring: 150 82% 51%;
+
+    --radius: 1.25rem;
+
+    --sidebar-background: 224 35% 8%;
+    --sidebar-foreground: 210 40% 98%;
+    --sidebar-primary: 150 82% 51%;
+    --sidebar-primary-foreground: 225 41% 8%;
+    --sidebar-accent: 226 23% 17%;
+    --sidebar-accent-foreground: 210 40% 98%;
+    --sidebar-border: 223 19% 22%;
+    --sidebar-ring: 150 82% 51%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    color-scheme: dark;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply min-h-screen bg-background font-sans text-foreground antialiased;
+    background-image: radial-gradient(circle at top, rgba(31, 227, 145, 0.12), transparent 28%),
+      radial-gradient(circle at 85% 18%, rgba(108, 92, 255, 0.18), transparent 20%),
+      linear-gradient(180deg, rgba(14, 18, 29, 0.96), rgba(8, 11, 19, 1));
+  }
+
+  #root {
+    @apply min-h-screen;
+  }
+
+  ::selection {
+    background: hsl(var(--primary) / 0.35);
+    color: hsl(var(--foreground));
+  }
+
+  :where(p, span, li, h1, h2, h3, h4, h5, h6, a, button, label, td, th) {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  a,
+  button,
+  input,
+  select {
+    @apply transition-colors duration-200;
+  }
+
+  pre,
+  code {
+    overflow-x: auto;
+    white-space: pre;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  ::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.12);
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+  }
+}
+
+@layer utilities {
+  .mask-fade-bottom {
+    mask-image: linear-gradient(to bottom, black 75%, transparent 100%);
+  }
+}
